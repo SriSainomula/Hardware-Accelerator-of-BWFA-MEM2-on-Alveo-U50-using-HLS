@@ -1,0 +1,48 @@
+#include <iostream>
+#include <cstring>
+
+#define MAX_SEQ_LEN 128
+#define MAX_ALIGN_LEN (MAX_SEQ_LEN * 2)
+
+// Top-level HLS function prototype
+extern "C" void top(
+    char *seq1, char *seq2,
+    int len1, int len2,
+    int gap_penalty, int match_score, int mismatch_penalty,
+    char *aligned_seq1, char *aligned_seq2
+);
+
+int main() {
+    // Test sequences
+    //char seq1[MAX_SEQ_LEN] = "TCTATACTGCGCGTTTGGAGAAATAAAATAGT";
+    //char seq2[MAX_SEQ_LEN] = "TCTTTACTCGCGCGTTGGAGAAATACAATAGT";
+
+    char seq1[MAX_SEQ_LEN] = "CCGTGGCCCCGGGCGCCTTCCTGGGCCTGAAGGCGCTGCGATGGCTGGACCTGTCCCACATGGA";
+    char seq2[MAX_SEQ_LEN] = "ATGGTGCTGTCTCCTGCCGACAAGACCAACGTCAAGGCCGCCTGGGGTAAGGTCGGCGCGCACG";
+
+    //char seq2[MAX_SEQ_LEN] = "GAGCAATT";
+    //char seq1[MAX_SEQ_LEN] = "ACTTAATT";
+
+    char aligned_seq1[MAX_ALIGN_LEN] = {0};
+    char aligned_seq2[MAX_ALIGN_LEN] = {0};
+
+    int len1 = strlen(seq1);
+    int len2 = strlen(seq2);
+
+    // Print the INPUTS
+    //std::cout << "Sequence 1: " << seq1 << " , LENGTH = " << len1 << std::endl;
+    //std::cout << "Sequence 2: " << seq2 << " , LENGTH = " << len2 << std::endl;
+
+    int gap_penalty = 0;
+    int match_score = 1;
+    int mismatch_penalty = 0;
+
+    // Call the HLS function
+    top(seq1, seq2, len1, len2, gap_penalty, match_score, mismatch_penalty, aligned_seq1, aligned_seq2);
+
+    // Print the results
+    std::cout << "Aligned Sequence 1: " << aligned_seq1 << std::endl;
+    std::cout << "Aligned Sequence 2: " << aligned_seq2 << std::endl;
+
+    return 0;
+}

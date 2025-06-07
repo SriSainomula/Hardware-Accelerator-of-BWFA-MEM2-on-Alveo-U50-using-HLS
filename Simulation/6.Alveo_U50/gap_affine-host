@@ -1,0 +1,203 @@
+#include <iostream>
+#include <iomanip>
+#include <cstring>
+#include <string>
+#include <time.h>
+
+// XRT includes
+#include "experimental/xrt_device.h"
+#include "experimental/xrt_kernel.h"
+#include "experimental/xrt_bo.h"
+
+#define MAX_SEQ_LEN 128
+#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+
+// Helper: Trim trailing nulls or spaces
+std::string trim_nulls(const char* str, size_t len) {
+    size_t end = len;
+    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+        --end;
+    return std::string(str, end);
+}
+
+double gettimestamp()
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return tv.tv_usec + tv.tv_sec * 1e6;
+}
+double hardware_start;
+double hardware_end;
+double hardware_time;
+
+int main(int argc, char** argv) {
+    // Check if xclbin file is provided
+    if (argc < 2) {
+        std::cerr << "❌ Usage: " << argv[0] << " <xclbin file>\n";
+        return EXIT_FAILURE;
+    }
+
+    std::string xclbin_file = argv[1];
+
+    // User input for DNA sequences
+    std::string seq1, seq2;
+    std::cout << "🔤 Enter DNA Sequence 1 (max " << MAX_SEQ_LEN << " chars): ";
+    std::getline(std::cin, seq1);
+    std::cout << "🔤 Enter DNA Sequence 2 (max " << MAX_SEQ_LEN << " chars): ";
+    std::getline(std::cin, seq2);
+
+    // Validate sequence lengths
+    if (seq1.length() > MAX_SEQ_LEN || seq2.length() > MAX_SEQ_LEN) {
+        std::cerr << "❌ Error: Input sequences exceed max length of " << MAX_SEQ_LEN << " characters.\n";
+        return EXIT_FAILURE;
+    }
+
+    int len1 = seq1.length();
+    int len2 = seq2.length();
+
+    int gap_penalty = -2;
+    int gap_extend = -1;
+    int match_score = 3;
+    int mismatch_penalty = -3;
+
+    std::cout << "\n====================[ DNA SEQUENCE ALIGNMENT ]====================\n";
+    std::cout << "🔑 Sequence 1 Length: " << len1 << " | Sequence 2 Length: " << len2 << "\n";
+    std::cout << "⚙️  Gap Penalty: " << gap_penalty << ", Gap_Extend: " << gap_extend << ", Match Score: " << match_score << ", Mismatch Penalty: " << mismatch_penalty << "\n";
+    std::cout << "===================================================================\n";
+
+    std::cout << "📡 Connecting to FPGA device...\n";
+    auto device = xrt::device(0);  // Device index 0
+
+    // Fetching device name or PCI address to identify it
+    try {
+        std::cout << "⚡ Device Name: " << device.get_info<xrt::info::device::name>() << "\n";  // Fetching device name
+        // If you want to display the PCI address, use the following line instead:
+//         std::cout << "⚡ Device PCI Address: " << device.get_info<xrt::info::device::pci_address>() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "❌ Error fetching device info: " << e.what() << "\n";
+        return EXIT_FAILURE;
+    }
+
+//    std::cout << "Starting Timer: " << endl;
+//    hardware_start = gettimestamp();
+
+    std::cout << "📁 Loading xclbin file: " << xclbin_file << "\n";
+    auto uuid = device.load_xclbin(xclbin_file);
+    auto kernel = xrt::kernel(device, uuid, "BWFA-kernel");
+
+    // Allocate buffers for DNA sequences and alignment results
+    std::cout << "🔧 Allocating memory buffers on FPGA for sequences and results...\n";
+    auto bo_seq1 = xrt::bo(device, MAX_SEQ_LEN, kernel.group_id(0));
+    auto bo_seq2 = xrt::bo(device, MAX_SEQ_LEN, kernel.group_id(1));
+    auto bo_aligned1 = xrt::bo(device, ALIGN_LEN, kernel.group_id(7));
+    auto bo_aligned2 = xrt::bo(device, ALIGN_LEN, kernel.group_id(8));
+
+    // Map buffers to CPU memory
+    char* ptr_seq1 = bo_seq1.map<char*>();
+    char* ptr_seq2 = bo_seq2.map<char*>();
+    char* ptr_aligned1 = bo_aligned1.map<char*>();
+    char* ptr_aligned2 = bo_aligned2.map<char*>();
+
+    // Zero out the buffers
+    std::memset(ptr_seq1, 0, MAX_SEQ_LEN);
+    std::memset(ptr_seq2, 0, MAX_SEQ_LEN);
+    std::memset(ptr_aligned1, 0, ALIGN_LEN);
+    std::memset(ptr_aligned2, 0, ALIGN_LEN);
+
+    // Copy sequences to the buffers
+    std::memcpy(ptr_seq1, seq1.c_str(), len1);
+    std::memcpy(ptr_seq2, seq2.c_str(), len2);
+
+    // Sync input buffers to FPGA memory
+    std::cout << "🔄 Syncing input sequences to FPGA...\n";
+    bo_seq1.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+    bo_seq2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+
+    std::cout << "Starting Timer: " << "\n";
+    hardware_start = gettimestamp();
+
+    std::cout << "🚀 Launching kernel for DNA sequence alignment...\n";
+    auto run = kernel(
+        bo_seq1, bo_seq2,   // Input sequences
+        len1, len2,         // Sequence lengths
+        gap_penalty,        // Gap penalty
+		gap_extend,         // Gap extend
+        match_score,        // Match score
+        mismatch_penalty,   // Mismatch penalty
+        bo_aligned1, bo_aligned2  // Output buffers
+    );
+    run.wait();
+
+    std::cout << "Ending  Timer: " << "\n";
+    hardware_end = gettimestamp();
+
+    hardware_time = (hardware_end - hardware_start)/1000 ;
+
+    // Sync output buffers from FPGA memory
+    std::cout << "🔄 Syncing aligned sequences from FPGA...\n";
+    bo_aligned1.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+    bo_aligned2.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+
+    // Trim any null characters from the output strings
+    std::string aligned1 = trim_nulls(ptr_aligned1, ALIGN_LEN);
+    std::string aligned2 = trim_nulls(ptr_aligned2, ALIGN_LEN);
+
+
+    // Print the alignment result
+    std::cout << "\n====================[ ALIGNMENT RESULT ]====================\n";
+    std::cout << "🔬 Input Sequence 1 : " << seq1 << "\n";
+    std::cout << "🔬 Input Sequence 2 : " << seq2 << "\n";
+    std::cout << "------------------------------------------------------------\n";
+    std::cout << "✅ Aligned Sequence 1: " << aligned1 << "\n";
+    std::cout << "✅ Aligned Sequence 2: " << aligned2 << "\n";
+    std::cout << "============================================================\n";
+    std::cout << "------------------------------------------------------------\n";
+    std::cout << "Time taken: " << hardware_time << "msec \n";
+    std::cout << "------------------------------------------------------------\n";
+//    std::cout << "\n================[ ALIGNMENT MATCH MATRIX ]================\n";
+//    std::cout << "      ";
+
+//    // Print column headers (seq2)
+//    for (char c : seq2) std::cout << std::setw(2) << c;
+//    std::cout << "\n      ";
+//    for (size_t j = 0; j < seq2.length(); ++j) std::cout << "──";
+//    std::cout << "\n";
+//
+//    // Build a matrix filled with ' ' and mark 'M' where aligned matches occur
+//    std::vector<std::vector<char>> matrix(seq1.length(), std::vector<char>(seq2.length(), ' '));
+//
+//    size_t i_pos = 0, j_pos = 0;
+//
+//    for (size_t k = 0; k < aligned1.length(); ++k) {
+//        char a = aligned1[k];
+//        char b = aligned2[k];
+//
+//        if (a != '-' && b != '-') {
+//            if (a == b && i_pos < seq1.length() && j_pos < seq2.length()) {
+//                matrix[i_pos][j_pos] = 'M';
+//            }
+//            i_pos++;
+//            j_pos++;
+//        } else if (a != '-') {
+//            i_pos++;
+//        } else if (b != '-') {
+//            j_pos++;
+//        }
+//    }
+//
+//    // Print the matrix
+//    for (size_t i = 0; i < seq1.length(); ++i) {
+//        std::cout << std::setw(3) << seq1[i] << " │";
+//        for (size_t j = 0; j < seq2.length(); ++j) {
+//            std::cout << " " << matrix[i][j];
+//        }
+//        std::cout << "\n";
+//    }
+//
+//    std::cout << "===========================================================\n";
+
+
+    std::cout << "🎉 Alignment completed successfully!\n";
+
+    return 0;
+}

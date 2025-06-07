@@ -1,0 +1,1091 @@
+//// Basic Host Code to run one kernel
+////#include <iostream>
+////#include <iomanip>
+////#include <cstring>
+////#include <string>
+////
+////// XRT includes
+////#include "experimental/xrt_device.h"
+////#include "experimental/xrt_kernel.h"
+////#include "experimental/xrt_bo.h"
+////
+////#define MAX_SEQ_LEN 128
+////#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+////
+////// Helper: Trim trailing nulls or spaces
+////std::string trim_nulls(const char* str, size_t len) {
+////    size_t end = len;
+////    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+////        --end;
+////    return std::string(str, end);
+////}
+////
+////int main(int argc, char** argv) {
+////    // Load basic arguments
+////    if (argc < 2) {
+////        std::cerr << "Usage: " << argv[0] << " <xclbin file>\n";
+////        return EXIT_FAILURE;
+////    }
+////
+////    std::string xclbin_file = argv[1];
+////
+////    // User Input
+////    std::string seq1, seq2;
+////    std::cout << "🔤 Enter DNA Sequence 1 (max " << MAX_SEQ_LEN << " chars): ";
+////    std::getline(std::cin, seq1);
+////    std::cout << "🔤 Enter DNA Sequence 2 (max " << MAX_SEQ_LEN << " chars): ";
+////    std::getline(std::cin, seq2);
+////
+////    if (seq1.length() > MAX_SEQ_LEN || seq2.length() > MAX_SEQ_LEN) {
+////        std::cerr << "❌ Error: Input sequences exceed max length of " << MAX_SEQ_LEN << " characters.\n";
+////        return EXIT_FAILURE;
+////    }
+////
+////    int len1 = seq1.length();
+////    int len2 = seq2.length();
+////
+////    int gap_penalty = -2;
+////    int match_score = 3;
+////    int mismatch_penalty = -3;
+////
+////    std::cout << "📡 Connecting to device...\n";
+////    auto device = xrt::device(0);
+////    auto uuid = device.load_xclbin(xclbin_file);
+////    auto kernel = xrt::kernel(device, uuid, "dummy_kernel");
+////
+////    // Allocate buffers
+////    auto bo_seq1 = xrt::bo(device, MAX_SEQ_LEN, kernel.group_id(0));
+////    auto bo_seq2 = xrt::bo(device, MAX_SEQ_LEN, kernel.group_id(1));
+////    auto bo_aligned1 = xrt::bo(device, ALIGN_LEN, kernel.group_id(7));
+////    auto bo_aligned2 = xrt::bo(device, ALIGN_LEN, kernel.group_id(8));
+////
+////    char* ptr_seq1 = bo_seq1.map<char*>();
+////    char* ptr_seq2 = bo_seq2.map<char*>();
+////    char* ptr_aligned1 = bo_aligned1.map<char*>();
+////    char* ptr_aligned2 = bo_aligned2.map<char*>();
+////
+////    std::memset(ptr_seq1, 0, MAX_SEQ_LEN);
+////    std::memset(ptr_seq2, 0, MAX_SEQ_LEN);
+////    std::memset(ptr_aligned1, 0, ALIGN_LEN);
+////    std::memset(ptr_aligned2, 0, ALIGN_LEN);
+////
+////    std::memcpy(ptr_seq1, seq1.c_str(), len1);
+////    std::memcpy(ptr_seq2, seq2.c_str(), len2);
+////
+////    bo_seq1.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+////    bo_seq2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+////
+////    std::cout << "🚀 Launching kernel...\n";
+////    auto run = kernel(
+////        bo_seq1, bo_seq2,
+////        len1, len2,
+////        gap_penalty, match_score, mismatch_penalty,
+////        bo_aligned1, bo_aligned2
+////    );
+////    run.wait();
+////
+////    bo_aligned1.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+////    bo_aligned2.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+////
+////    std::string aligned1 = trim_nulls(ptr_aligned1, ALIGN_LEN);
+////    std::string aligned2 = trim_nulls(ptr_aligned2, ALIGN_LEN);
+////
+////    std::cout << "\n==================[ ALIGNMENT RESULT ]==================\n";
+////    std::cout << "🔬 Input Seq1  : " << seq1 << "\n";
+////    std::cout << "🔬 Input Seq2  : " << seq2 << "\n";
+////    std::cout << "--------------------------------------------------------\n";
+////    std::cout << "✅ Aligned 1   : " << aligned1 << "\n";
+////    std::cout << "✅ Aligned 2   : " << aligned2 << "\n";
+////    std::cout << "========================================================\n";
+////
+////    return 0;
+////}
+////////
+////
+//////#include <iostream>
+//////#include <iomanip>
+//////#include <cstring>
+//////#include <string>
+//////#include <time.h>
+//////
+//////// XRT includes
+//////#include "experimental/xrt_device.h"
+//////#include "experimental/xrt_kernel.h"
+//////#include "experimental/xrt_bo.h"
+//////
+//////#define MAX_SEQ_LEN 128
+//////#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+//////
+//////// Helper: Trim trailing nulls or spaces
+//////std::string trim_nulls(const char* str, size_t len) {
+//////    size_t end = len;
+//////    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+//////        --end;
+//////    return std::string(str, end);
+//////}
+//////
+//////double gettimestamp()
+//////{
+//////	struct timeval tv;
+//////	gettimeofday(&tv, NULL);
+//////	return tv.tv_usec + tv.tv_sec * 1e6;
+//////}
+//////double hardware_start;
+//////double hardware_end;
+//////double hardware_time;
+//////
+//////int main(int argc, char** argv) {
+//////    // Check if xclbin file is provided
+//////    if (argc < 2) {
+//////        std::cerr << "❌ Usage: " << argv[0] << " <xclbin file>\n";
+//////        return EXIT_FAILURE;
+//////    }
+//////
+//////    std::string xclbin_file = argv[1];
+//////
+//////    // User input for DNA sequences
+//////    std::string seq1, seq2;
+//////    std::cout << "🔤 Enter DNA Sequence 1 (max " << MAX_SEQ_LEN << " chars): ";
+//////    std::getline(std::cin, seq1);
+//////    std::cout << "🔤 Enter DNA Sequence 2 (max " << MAX_SEQ_LEN << " chars): ";
+//////    std::getline(std::cin, seq2);
+//////
+//////    // Validate sequence lengths
+//////    if (seq1.length() > MAX_SEQ_LEN || seq2.length() > MAX_SEQ_LEN) {
+//////        std::cerr << "❌ Error: Input sequences exceed max length of " << MAX_SEQ_LEN << " characters.\n";
+//////        return EXIT_FAILURE;
+//////    }
+//////
+//////    int len1 = seq1.length();
+//////    int len2 = seq2.length();
+//////
+//////    int gap_penalty = -2;
+//////    int match_score = 3;
+//////    int mismatch_penalty = -3;
+//////
+//////    std::cout << "\n====================[ DNA SEQUENCE ALIGNMENT ]====================\n";
+//////    std::cout << "🔑 Sequence 1 Length: " << len1 << " | Sequence 2 Length: " << len2 << "\n";
+//////    std::cout << "⚙️  Gap Penalty: " << gap_penalty << ", Match Score: " << match_score << ", Mismatch Penalty: " << mismatch_penalty << "\n";
+//////    std::cout << "===================================================================\n";
+//////
+//////    std::cout << "📡 Connecting to FPGA device...\n";
+//////    auto device = xrt::device(0);  // Device index 0
+//////
+//////    // Fetching device name or PCI address to identify it
+//////    try {
+//////        std::cout << "⚡ Device Name: " << device.get_info<xrt::info::device::name>() << "\n";  // Fetching device name
+//////        // If you want to display the PCI address, use the following line instead:
+////////         std::cout << "⚡ Device PCI Address: " << device.get_info<xrt::info::device::pci_address>() << "\n";
+//////    } catch (const std::exception& e) {
+//////        std::cerr << "❌ Error fetching device info: " << e.what() << "\n";
+//////        return EXIT_FAILURE;
+//////    }
+//////
+////////    std::cout << "Starting Timer: " << endl;
+////////    hardware_start = gettimestamp();
+//////
+//////    std::cout << "📁 Loading xclbin file: " << xclbin_file << "\n";
+//////    auto uuid = device.load_xclbin(xclbin_file);
+//////    auto kernel = xrt::kernel(device, uuid, "dummy_kernel");
+//////
+//////    // Allocate buffers for DNA sequences and alignment results
+//////    std::cout << "🔧 Allocating memory buffers on FPGA for sequences and results...\n";
+//////    auto bo_seq1 = xrt::bo(device, MAX_SEQ_LEN, kernel.group_id(0));
+//////    auto bo_seq2 = xrt::bo(device, MAX_SEQ_LEN, kernel.group_id(1));
+//////    auto bo_aligned1 = xrt::bo(device, ALIGN_LEN, kernel.group_id(7));
+//////    auto bo_aligned2 = xrt::bo(device, ALIGN_LEN, kernel.group_id(8));
+//////
+//////    // Map buffers to CPU memory
+//////    char* ptr_seq1 = bo_seq1.map<char*>();
+//////    char* ptr_seq2 = bo_seq2.map<char*>();
+//////    char* ptr_aligned1 = bo_aligned1.map<char*>();
+//////    char* ptr_aligned2 = bo_aligned2.map<char*>();
+//////
+//////    // Zero out the buffers
+//////    std::memset(ptr_seq1, 0, MAX_SEQ_LEN);
+//////    std::memset(ptr_seq2, 0, MAX_SEQ_LEN);
+//////    std::memset(ptr_aligned1, 0, ALIGN_LEN);
+//////    std::memset(ptr_aligned2, 0, ALIGN_LEN);
+//////
+//////    // Copy sequences to the buffers
+//////    std::memcpy(ptr_seq1, seq1.c_str(), len1);
+//////    std::memcpy(ptr_seq2, seq2.c_str(), len2);
+//////
+//////    // Sync input buffers to FPGA memory
+//////    std::cout << "🔄 Syncing input sequences to FPGA...\n";
+//////    bo_seq1.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//////    bo_seq2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//////
+//////    std::cout << "Starting Timer: " << "\n";
+//////    hardware_start = gettimestamp();
+//////
+//////    std::cout << "🚀 Launching kernel for DNA sequence alignment...\n";
+//////    auto run = kernel(
+//////        bo_seq1, bo_seq2,   // Input sequences
+//////        len1, len2,         // Sequence lengths
+//////        gap_penalty,        // Gap penalty
+//////        match_score,        // Match score
+//////        mismatch_penalty,   // Mismatch penalty
+//////        bo_aligned1, bo_aligned2  // Output buffers
+//////    );
+//////    run.wait();
+//////
+//////    std::cout << "Ending  Timer: " << "\n";
+//////    hardware_end = gettimestamp();
+//////
+//////    hardware_time = (hardware_end - hardware_start)/1000 ;
+//////
+//////    // Sync output buffers from FPGA memory
+//////    std::cout << "🔄 Syncing aligned sequences from FPGA...\n";
+//////    bo_aligned1.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//////    bo_aligned2.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//////
+//////    // Trim any null characters from the output strings
+//////    std::string aligned1 = trim_nulls(ptr_aligned1, ALIGN_LEN);
+//////    std::string aligned2 = trim_nulls(ptr_aligned2, ALIGN_LEN);
+//////
+//////
+//////    // Print the alignment result
+//////    std::cout << "\n====================[ ALIGNMENT RESULT ]====================\n";
+//////    std::cout << "🔬 Input Sequence 1 : " << seq1 << "\n";
+//////    std::cout << "🔬 Input Sequence 2 : " << seq2 << "\n";
+//////    std::cout << "------------------------------------------------------------\n";
+//////    std::cout << "✅ Aligned Sequence 1: " << aligned1 << "\n";
+//////    std::cout << "✅ Aligned Sequence 2: " << aligned2 << "\n";
+//////    std::cout << "============================================================\n";
+//////    std::cout << "------------------------------------------------------------\n";
+//////    std::cout << "Time taken: " << hardware_time << "msec \n";
+//////    std::cout << "------------------------------------------------------------\n";
+//////    std::cout << "\n================[ ALIGNMENT MATCH MATRIX ]================\n";
+//////    std::cout << "      ";
+//////
+//////    // Print column headers (seq2)
+//////    for (char c : seq2) std::cout << std::setw(2) << c;
+//////    std::cout << "\n      ";
+//////    for (size_t j = 0; j < seq2.length(); ++j) std::cout << "──";
+//////    std::cout << "\n";
+//////
+//////    // Build a matrix filled with ' ' and mark 'M' where aligned matches occur
+//////    std::vector<std::vector<char>> matrix(seq1.length(), std::vector<char>(seq2.length(), ' '));
+//////
+//////    size_t i_pos = 0, j_pos = 0;
+//////
+//////    for (size_t k = 0; k < aligned1.length(); ++k) {
+//////        char a = aligned1[k];
+//////        char b = aligned2[k];
+//////
+//////        if (a != '-' && b != '-') {
+//////            if (a == b && i_pos < seq1.length() && j_pos < seq2.length()) {
+//////                matrix[i_pos][j_pos] = 'M';
+//////            }
+//////            i_pos++;
+//////            j_pos++;
+//////        } else if (a != '-') {
+//////            i_pos++;
+//////        } else if (b != '-') {
+//////            j_pos++;
+//////        }
+//////    }
+//////
+//////    // Print the matrix
+//////    for (size_t i = 0; i < seq1.length(); ++i) {
+//////        std::cout << std::setw(3) << seq1[i] << " │";
+//////        for (size_t j = 0; j < seq2.length(); ++j) {
+//////            std::cout << " " << matrix[i][j];
+//////        }
+//////        std::cout << "\n";
+//////    }
+//////
+//////    std::cout << "===========================================================\n";
+//////
+//////
+//////    std::cout << "🎉 Alignment completed successfully!\n";
+//////
+//////    return 0;
+//////}
+////
+////
+//////#include <iostream>
+//////#include <iomanip>
+//////#include <cstring>
+//////#include <string>
+//////#include <vector>
+//////#include <time.h>
+//////#include <unistd.h>  // For sleep if needed to sync parallel tasks
+//////
+//////// XRT includes
+//////#include "experimental/xrt_device.h"
+//////#include "experimental/xrt_kernel.h"
+//////#include "experimental/xrt_bo.h"
+//////
+//////#define MAX_SEQ_LEN 128
+//////#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+//////
+//////// Helper: Trim trailing nulls or spaces
+//////std::string trim_nulls(const char* str, size_t len) {
+//////    size_t end = len;
+//////    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+//////        --end;
+//////    return std::string(str, end);
+//////}
+//////
+//////double gettimestamp() {
+//////    struct timeval tv;
+//////    gettimeofday(&tv, NULL);
+//////    return tv.tv_usec + tv.tv_sec * 1e6;
+//////}
+//////
+//////double hardware_start;
+//////double hardware_end;
+//////double hardware_time;
+//////
+//////int main(int argc, char** argv) {
+//////    // Check if xclbin file is provided
+//////    if (argc < 2) {
+//////        std::cerr << "❌ Usage: " << argv[0] << " <xclbin file>\n";
+//////        return EXIT_FAILURE;
+//////    }
+//////
+//////    std::string xclbin_file = argv[1];
+//////
+//////    // User input for DNA sequences for two kernel instances
+//////    std::string seq1, seq2, seq3, seq4;
+//////    std::cout << "🔤 Enter DNA Sequence 1 for Kernel 1 (max " << MAX_SEQ_LEN << " chars): ";
+//////    std::getline(std::cin, seq1);
+//////    std::cout << "🔤 Enter DNA Sequence 2 for Kernel 1 (max " << MAX_SEQ_LEN << " chars): ";
+//////    std::getline(std::cin, seq2);
+//////    std::cout << "🔤 Enter DNA Sequence 1 for Kernel 2 (max " << MAX_SEQ_LEN << " chars): ";
+//////    std::getline(std::cin, seq3);
+//////    std::cout << "🔤 Enter DNA Sequence 2 for Kernel 2 (max " << MAX_SEQ_LEN << " chars): ";
+//////    std::getline(std::cin, seq4);
+//////
+//////    // Validate sequence lengths
+//////    if (seq1.length() > MAX_SEQ_LEN || seq2.length() > MAX_SEQ_LEN ||
+//////        seq3.length() > MAX_SEQ_LEN || seq4.length() > MAX_SEQ_LEN) {
+//////        std::cerr << "❌ Error: Input sequences exceed max length of " << MAX_SEQ_LEN << " characters.\n";
+//////        return EXIT_FAILURE;
+//////    }
+//////
+//////    int len1 = seq1.length();
+//////    int len2 = seq2.length();
+//////    int len3 = seq3.length();
+//////    int len4 = seq4.length();
+//////
+//////    int gap_penalty = -2;
+//////    int match_score = 3;
+//////    int mismatch_penalty = -3;
+//////
+//////    std::cout << "\n====================[ DNA SEQUENCE ALIGNMENT ]====================\n";
+//////    std::cout << "🔑 Sequence 1 Length: " << len1 << " | Sequence 2 Length: " << len2 << "\n";
+//////    std::cout << "🔑 Sequence 3 Length: " << len3 << " | Sequence 4 Length: " << len4 << "\n";
+//////    std::cout << "⚙️  Gap Penalty: " << gap_penalty << ", Match Score: " << match_score << ", Mismatch Penalty: " << mismatch_penalty << "\n";
+//////    std::cout << "===================================================================\n";
+//////
+//////    std::cout << "📡 Connecting to FPGA device...\n";
+//////    auto device = xrt::device(0);  // Device index 0
+//////
+//////    // Fetching device name or PCI address to identify it
+//////    try {
+//////        std::cout << "⚡ Device Name: " << device.get_info<xrt::info::device::name>() << "\n";  // Fetching device name
+//////    } catch (const std::exception& e) {
+//////        std::cerr << "❌ Error fetching device info: " << e.what() << "\n";
+//////        return EXIT_FAILURE;
+//////    }
+//////
+//////    std::cout << "📁 Loading xclbin file: " << xclbin_file << "\n";
+//////    auto uuid = device.load_xclbin(xclbin_file);
+//////
+//////    // Create 2 kernel objects for parallel execution
+//////    auto krnl1 = xrt::kernel(device, uuid, "dummy_kernel");
+//////    auto krnl2 = xrt::kernel(device, uuid, "dummy_kernel");
+//////
+//////    // Allocate buffers for DNA sequences and alignment results for both kernels
+//////    std::cout << "🔧 Allocating memory buffers on FPGA for sequences and results...\n";
+//////    auto bo_seq1 = xrt::bo(device, MAX_SEQ_LEN, krnl1.group_id(0));
+//////    auto bo_seq2 = xrt::bo(device, MAX_SEQ_LEN, krnl1.group_id(1));
+//////    auto bo_seq3 = xrt::bo(device, MAX_SEQ_LEN, krnl2.group_id(0));
+//////    auto bo_seq4 = xrt::bo(device, MAX_SEQ_LEN, krnl2.group_id(1));
+//////
+//////    auto bo_aligned1 = xrt::bo(device, ALIGN_LEN, krnl1.group_id(7));
+//////    auto bo_aligned2 = xrt::bo(device, ALIGN_LEN, krnl1.group_id(8));
+//////    auto bo_aligned3 = xrt::bo(device, ALIGN_LEN, krnl2.group_id(7));
+//////    auto bo_aligned4 = xrt::bo(device, ALIGN_LEN, krnl2.group_id(8));
+//////
+//////    // Map buffers to CPU memory
+//////    char* ptr_seq1 = bo_seq1.map<char*>();
+//////    char* ptr_seq2 = bo_seq2.map<char*>();
+//////    char* ptr_seq3 = bo_seq3.map<char*>();
+//////    char* ptr_seq4 = bo_seq4.map<char*>();
+//////    char* ptr_aligned1 = bo_aligned1.map<char*>();
+//////    char* ptr_aligned2 = bo_aligned2.map<char*>();
+//////    char* ptr_aligned3 = bo_aligned3.map<char*>();
+//////    char* ptr_aligned4 = bo_aligned4.map<char*>();
+//////
+//////    // Zero out the buffers
+//////    std::memset(ptr_seq1, 0, MAX_SEQ_LEN);
+//////    std::memset(ptr_seq2, 0, MAX_SEQ_LEN);
+//////    std::memset(ptr_seq3, 0, MAX_SEQ_LEN);
+//////    std::memset(ptr_seq4, 0, MAX_SEQ_LEN);
+//////    std::memset(ptr_aligned1, 0, ALIGN_LEN);
+//////    std::memset(ptr_aligned2, 0, ALIGN_LEN);
+//////    std::memset(ptr_aligned3, 0, ALIGN_LEN);
+//////    std::memset(ptr_aligned4, 0, ALIGN_LEN);
+//////
+//////    // Copy sequences to the buffers
+//////    std::memcpy(ptr_seq1, seq1.c_str(), len1);
+//////    std::memcpy(ptr_seq2, seq2.c_str(), len2);
+//////    std::memcpy(ptr_seq3, seq3.c_str(), len3);
+//////    std::memcpy(ptr_seq4, seq4.c_str(), len4);
+//////
+//////    // Sync input buffers to FPGA memory
+//////    std::cout << "🔄 Syncing input sequences to FPGA...\n";
+//////    bo_seq1.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//////    bo_seq2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//////    bo_seq3.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//////    bo_seq4.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//////
+//////    std::cout << "Starting Timer: " << "\n";
+//////    hardware_start = gettimestamp();
+//////
+//////    std::cout << "🚀 Launching Kernel 1 for DNA sequence alignment...\n";
+//////    auto run1 = krnl1(
+//////        bo_seq1, bo_seq2,   // Input sequences for kernel 1
+//////        len1, len2,         // Sequence lengths
+//////        gap_penalty,        // Gap penalty
+//////        match_score,        // Match score
+//////        mismatch_penalty,   // Mismatch penalty
+//////        bo_aligned1, bo_aligned2  // Output buffers for kernel 1
+//////    );
+//////
+//////    std::cout << "🚀 Launching Kernel 2 for DNA sequence alignment...\n";
+//////    auto run2 = krnl2(
+//////        bo_seq3, bo_seq4,   // Input sequences for kernel 2
+//////        len3, len4,         // Sequence lengths
+//////        gap_penalty,        // Gap penalty
+//////        match_score,        // Match score
+//////        mismatch_penalty,   // Mismatch penalty
+//////        bo_aligned3, bo_aligned4  // Output buffers for kernel 2
+//////    );
+//////
+//////    // Wait for both kernels to finish
+//////    run1.wait();
+//////    run2.wait();
+//////
+//////    std::cout << "Ending Timer: " << "\n";
+//////    hardware_end = gettimestamp();
+//////    hardware_time = (hardware_end - hardware_start)/1000 ;
+//////
+//////    // Sync output buffers from FPGA memory
+//////    std::cout << "🔄 Syncing aligned sequences from FPGA...\n";
+//////    bo_aligned1.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//////    bo_aligned2.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//////    bo_aligned3.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//////    bo_aligned4.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//////
+//////    // Trim any null characters from the output strings
+//////    std::string aligned1 = trim_nulls(ptr_aligned1, ALIGN_LEN);
+//////    std::string aligned2 = trim_nulls(ptr_aligned2, ALIGN_LEN);
+//////    std::string aligned3 = trim_nulls(ptr_aligned3, ALIGN_LEN);
+//////    std::string aligned4 = trim_nulls(ptr_aligned4, ALIGN_LEN);
+//////
+//////    // Print the alignment results
+//////    std::cout << "\n====================[ ALIGNMENT RESULT ]====================\n";
+//////    std::cout << "🔬 Input Sequence 1 : " << seq1 << "\n";
+//////    std::cout << "🔬 Input Sequence 2 : " << seq2 << "\n";
+//////    std::cout << "------------------------------------------------------------\n";
+//////    std::cout << "✅ Aligned Sequence 1: " << aligned1 << "\n";
+//////    std::cout << "✅ Aligned Sequence 2: " << aligned2 << "\n";
+//////    std::cout << "\nFor Kernel 2:\n";
+//////    std::cout << "🔬 Input Sequence 3 : " << seq3 << "\n";
+//////    std::cout << "🔬 Input Sequence 4 : " << seq4 << "\n";
+//////    std::cout << "------------------------------------------------------------\n";
+//////    std::cout << "✅ Aligned Sequence 3: " << aligned3 << "\n";
+//////    std::cout << "✅ Aligned Sequence 4: " << aligned4 << "\n";
+//////    std::cout << "============================================================\n";
+//////
+//////    std::cout << "Time taken: " << hardware_time << " msec \n";
+//////    std::cout << "🎉 Alignment completed successfully!\n";
+//////
+//////    return 0;
+//////}
+//
+//// Linear- Gap Host Code to run 4 kernels parallely
+//#include <iostream>
+//#include <iomanip>
+//#include <cstring>
+//#include <string>
+//#include <vector>
+//#include <memory>
+//#include <algorithm>
+//#include <time.h>
+//
+//// XRT includes
+//#include "experimental/xrt_device.h"
+//#include "experimental/xrt_kernel.h"
+//#include "experimental/xrt_bo.h"
+//
+//#define MAX_SEQ_LEN 128
+//#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+//#define NUM_KERNELS 4  // Number of CUs in xclbin
+//
+//// Helper: Trim trailing nulls or spaces
+//std::string trim_nulls(const char* str, size_t len) {
+//    size_t end = len;
+//    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+//        --end;
+//    return std::string(str, end);
+//}
+//
+////gettimestamp: Function to get the execution time of the kernel
+//double gettimestamp(){
+//	struct timeval tv;
+//	gettimeofday(&tv,NULL);
+//	return tv.tv_usec + tv.tv_sec*1e6;
+//}
+//
+//double hardware_start;
+//double hardware_end;
+//double hardware_time;
+//
+//int main(int argc, char** argv) {
+//    if (argc < 2) {
+//        std::cerr << "Usage: " << argv[0] << " <xclbin file>\n";
+//        return EXIT_FAILURE;
+//    }
+//
+//    std::string xclbin_file = argv[1];
+//
+//    // User Input
+//    std::string seq1, seq2;
+//    std::cout << "🔤 Enter DNA Sequence 1 (max " << MAX_SEQ_LEN << " chars): ";
+//    std::getline(std::cin, seq1);
+//    std::cout << "🔤 Enter DNA Sequence 2 (max " << MAX_SEQ_LEN << " chars): ";
+//    std::getline(std::cin, seq2);
+//
+//    if (seq1.length() > NUM_KERNELS * MAX_SEQ_LEN || seq2.length() > NUM_KERNELS * MAX_SEQ_LEN) {
+//        std::cerr << "❌ Error: Input sequences exceed max length of " << NUM_KERNELS * MAX_SEQ_LEN << " characters.\n";
+//        return EXIT_FAILURE;
+//    }
+//
+//    int len1 = seq1.length();
+//    int len2 = seq2.length();
+//
+//    int gap_penalty = -2;
+//    int match_score = 1;
+//    int mismatch_penalty = -2;
+//
+//    std::cout << "📡 Connecting to device...\n";
+//    auto device = xrt::device(0);
+//
+//    std::cout << "Starting Timer\n";
+//    hardware_start = gettimestamp();
+//
+//    auto uuid = device.load_xclbin(xclbin_file);
+//
+//    //int part_len1 = (len1 + NUM_KERNELS - 1) / NUM_KERNELS;
+//    //int part_len2 = (len2 + NUM_KERNELS - 1) / NUM_KERNELS;
+//
+//    const int part_len = MAX_SEQ_LEN;  //Fixed 128 chars per kernel
+//
+//
+//    std::vector<xrt::bo> bos_seq1, bos_seq2, bos_aligned1, bos_aligned2;
+//    std::vector<std::unique_ptr<char[]>> maps_seq1, maps_seq2;
+//    std::vector<xrt::run> runs;
+//
+//    for (int i = 0; i < NUM_KERNELS; ++i) {
+//
+//    	// Calculate part lengths and start positions
+//    	int start1 = i * part_len;
+//    	int len_chunk1 = std::min(part_len, (len1 > start1) ? (len1 - start1) : 0 );
+//    	int start2 = i * part_len;
+//    	int len_chunk2 = std::min(part_len, (len2 > start2) ? (len2 - start2) : 0 );
+//
+//    	// Checking inputs for the kernels
+//    	if(len_chunk1 == 0 || len_chunk2 == 0){
+//    		std::cout << "Skipping kernel instance " << i + 1 << " due to zero length input.\n";
+//    		continue;
+//    	}
+//
+//        // Use CU-specific kernel name
+//        std::string kernel_name = "dummy_kernel:{dummy_kernel_" + std::to_string(i + 1) + "}";
+//        auto kernel = xrt::kernel(device, uuid, kernel_name);
+//
+//        // Allocate buffers
+//        bos_seq1.emplace_back(device, MAX_SEQ_LEN, kernel.group_id(0));
+//        bos_seq2.emplace_back(device, MAX_SEQ_LEN, kernel.group_id(1));
+//        bos_aligned1.emplace_back(device, ALIGN_LEN, kernel.group_id(7));
+//        bos_aligned2.emplace_back(device, ALIGN_LEN, kernel.group_id(8));
+//
+//        maps_seq1.emplace_back(new char[MAX_SEQ_LEN]());
+//        maps_seq2.emplace_back(new char[MAX_SEQ_LEN]());
+//
+//        std::memcpy(maps_seq1[i].get(), seq1.c_str() + start1, len_chunk1);
+//        std::memcpy(maps_seq2[i].get(), seq2.c_str() + start2, len_chunk2);
+//
+//        std::memcpy(bos_seq1[i].map<char*>(), maps_seq1[i].get(), MAX_SEQ_LEN);
+//        std::memcpy(bos_seq2[i].map<char*>(), maps_seq2[i].get(), MAX_SEQ_LEN);
+//
+//        bos_seq1[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//        bos_seq2[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//
+//        // Launch the kernel
+//        std::cout << "🚀 Launching kernel instance " << i + 1 << "...\n";
+//        runs.emplace_back(kernel(
+//            bos_seq1[i], bos_seq2[i],
+//            len_chunk1, len_chunk2,
+//            gap_penalty, match_score, mismatch_penalty,
+//            bos_aligned1[i], bos_aligned2[i]
+//        ));
+//    }
+//
+//    // Wait for all runs to finish
+//    for (auto& run : runs)
+//        run.wait();
+//
+//    std::cout << "Ending Timer\n";
+//    hardware_end = gettimestamp();
+//
+//    hardware_time = (hardware_end - hardware_start)/1000;
+//
+//    // Retrieve aligned results
+//    std::string final_aligned1, final_aligned2;
+//    for (int i = 0; i < runs.size(); ++i) {
+//        bos_aligned1[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//        bos_aligned2[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//
+//        char* p1 = bos_aligned1[i].map<char*>();
+//        char* p2 = bos_aligned2[i].map<char*>();
+//
+//        final_aligned1 += trim_nulls(p1, ALIGN_LEN);
+//        final_aligned2 += trim_nulls(p2, ALIGN_LEN);
+//    }
+//
+//    std::cout << "\n==================[ ALIGNMENT RESULT ]==================\n";
+//    std::cout << "🔬 Input Seq1  : " << seq1 << "\n";
+//    std::cout << "🔬 Input Seq2  : " << seq2 << "\n";
+//    std::cout << "--------------------------------------------------------\n";
+//    std::cout << "✅ Aligned 1   : " << final_aligned1 << "\n";
+//    std::cout << "✅ Aligned 2   : " << final_aligned2 << "\n";
+//    std::cout << "========================================================\n";
+//    std::cout << "Execution Time: " << hardware_time << "msec\n";
+//    std::cout << "========================================================\n";
+//
+//    return 0;
+//}
+
+////Linear- Gap Host Code to run 4 kernels parallely multiple times
+//#include <iostream>
+//#include <iomanip>
+//#include <cstring>
+//#include <string>
+//#include <vector>
+//#include <memory>
+//#include <algorithm>
+//#include <time.h>
+//
+//// XRT includes
+//#include "experimental/xrt_device.h"
+//#include "experimental/xrt_kernel.h"
+//#include "experimental/xrt_bo.h"
+//
+//#define MAX_SEQ_LEN 128
+//#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+//
+//std::string trim_nulls(const char* str, size_t len) {
+//    size_t end = len;
+//    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+//        --end;
+//    return std::string(str, end);
+//}
+//
+//double gettimestamp() {
+//    struct timeval tv;
+//    gettimeofday(&tv, NULL);
+//    return tv.tv_usec + tv.tv_sec * 1e6;
+//}
+//
+//double hardware_start;
+//double hardware_end;
+//double hardware_time;
+//
+//int main(int argc, char** argv) {
+//    if (argc < 2) {
+//        std::cerr << "Usage: " << argv[0] << " <xclbin file>\n";
+//        return EXIT_FAILURE;
+//    }
+//
+//    std::string xclbin_file = argv[1];
+//
+//    // User Input
+//    std::string seq1, seq2;
+//    std::cout << "🔤 Enter DNA Sequence 1: ";
+//    std::getline(std::cin, seq1);
+//    std::cout << "🔤 Enter DNA Sequence 2: ";
+//    std::getline(std::cin, seq2);
+//
+//    int len1 = seq1.length();
+//    int len2 = seq2.length();
+//
+//    // Validate sequence lengths
+//    if (len1 == 0 || len2 == 0) {
+//        std::cerr << "❌ Error: One or both sequences are empty.\n";
+//        return EXIT_FAILURE;
+//    }
+//
+//    // Calculate the number of iterations based on the sequence lengths
+//    int total_kernels = 4;  // Fixed number of kernels
+//    int total_length = std::max(len1, len2);
+//    int num_iterations = (total_length + 511) / 512;  // Divide sequence into 512 character chunks
+//    std::string final_aligned1, final_aligned2;
+//
+//    std::cout << "📡 Connecting to device...\n";
+//    auto device = xrt::device(0);
+//
+//    std::cout << "Starting Timer\n";
+//    hardware_start = gettimestamp();
+//
+//    auto uuid = device.load_xclbin(xclbin_file);
+//
+//    std::vector<xrt::bo> bos_seq1, bos_seq2, bos_aligned1, bos_aligned2;
+//    std::vector<std::unique_ptr<char[]>> maps_seq1, maps_seq2;
+//    std::vector<xrt::run> runs;
+//
+//    // Loop through iterations for long sequences
+//    for (int iteration = 0; iteration < num_iterations; ++iteration) {
+//    	std::cout << "Starting Iteration:" << iteration + 1 << "\n";
+//        int start_offset = iteration * 512;
+//
+//        // Launch kernels for the current chunk of 512 characters
+//        for (int i = 0; i < total_kernels; ++i) {
+//            int start1 = start_offset + i * MAX_SEQ_LEN;
+//            int start2 = start_offset + i * MAX_SEQ_LEN;
+//
+//            int len_chunk1 = std::min(MAX_SEQ_LEN, (len1 > start1) ? (len1 - start1) : 0 );  // Avoid overflow
+//            int len_chunk2 = std::min(MAX_SEQ_LEN, (len2 > start2) ? (len2 - start2) : 0);
+//
+//            if (len_chunk1 == 0 || len_chunk2 == 0) {
+//            	std::cout << "Skipping kernel instance " << i + 1 << " due to zero length input.\n";
+//                continue;  // Skip kernel if no data to process
+//            }
+//
+//            // Use CU-specific kernel name for parallel launch
+//            std::string kernel_name = "dummy_kernel:{dummy_kernel_" + std::to_string(i + 1) + "}";
+//            auto kernel = xrt::kernel(device, uuid, kernel_name);
+//
+//            // Allocate buffers for current kernel
+//            bos_seq1.emplace_back(device, MAX_SEQ_LEN, kernel.group_id(0));
+//            bos_seq2.emplace_back(device, MAX_SEQ_LEN, kernel.group_id(1));
+//            bos_aligned1.emplace_back(device, ALIGN_LEN, kernel.group_id(7));
+//            bos_aligned2.emplace_back(device, ALIGN_LEN, kernel.group_id(8));
+//
+//            maps_seq1.emplace_back(new char[MAX_SEQ_LEN]());
+//            maps_seq2.emplace_back(new char[MAX_SEQ_LEN]());
+//
+//            std::memcpy(maps_seq1[i].get(), seq1.c_str() + start1, len_chunk1);
+//            std::memcpy(maps_seq2[i].get(), seq2.c_str() + start2, len_chunk2);
+//
+//            std::memcpy(bos_seq1[i].map<char*>(), maps_seq1[i].get(), MAX_SEQ_LEN);
+//            std::memcpy(bos_seq2[i].map<char*>(), maps_seq2[i].get(), MAX_SEQ_LEN);
+//
+//            bos_seq1[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//            bos_seq2[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+//
+//            // Launch kernel for current chunk of sequences
+//            std::cout << "🚀 Launching kernel instance " << i + 1 << "...\n";
+//            runs.emplace_back(kernel(
+//                bos_seq1[i], bos_seq2[i],
+//                len_chunk1, len_chunk2,
+//                -2, 1, -2, // gap_penalty, match_score, mismatch_penalty
+//                bos_aligned1[i], bos_aligned2[i]
+//            ));
+//        }
+//
+//        // Wait for all kernels to finish processing for this iteration
+//        for (auto& run : runs) {
+//            run.wait();
+//        }
+//
+//        // Retrieve the aligned results from all kernels
+//        for (int i = 0; i < runs.size(); ++i) {
+//        	bos_aligned1[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//            bos_aligned2[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+//
+//            char* p1 = bos_aligned1[i].map<char*>();
+//            char* p2 = bos_aligned2[i].map<char*>();
+//
+//            final_aligned1 += trim_nulls(p1, ALIGN_LEN);
+//            final_aligned2 += trim_nulls(p2, ALIGN_LEN);
+//        // Clear previous buffers for next iteration
+//        //runs.clear();
+//        }
+//    }
+//
+//    std::cout << "Ending Timer\n";
+//    hardware_end = gettimestamp();
+//    hardware_time = (hardware_end - hardware_start) / 1000;
+//
+//    std::cout << "\n==================[ ALIGNMENT RESULT ]==================\n";
+//    std::cout << "🔬 Input Seq1  : " << seq1 << "\n";
+//    std::cout << "🔬 Input Seq2  : " << seq2 << "\n";
+//    std::cout << "--------------------------------------------------------\n";
+//    std::cout << "✅ Aligned 1   : " << final_aligned1 << "\n";
+//    std::cout << "✅ Aligned 2   : " << final_aligned2 << "\n";
+//    std::cout << "========================================================\n";
+//    std::cout << "Execution Time: " << hardware_time << "msec\n";
+//    std::cout << "========================================================\n";
+//
+//    return 0;
+//}
+
+//Linear- Gap Host Code to run 4 kernels parallely multiple times
+//Input Sequences are given from a text file
+#include <iostream>
+#include <iomanip>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <memory>
+#include <algorithm>
+#include <time.h>
+#include <fstream>
+
+// XRT includes
+#include "experimental/xrt_device.h"
+#include "experimental/xrt_kernel.h"
+#include "experimental/xrt_bo.h"
+
+#define MAX_SEQ_LEN 128
+#define ALIGN_LEN (MAX_SEQ_LEN * 2)
+
+std::string trim_nulls(const char* str, size_t len) {
+    size_t end = len;
+    while (end > 0 && (str[end - 1] == '\0' || str[end - 1] == ' '))
+        --end;
+    return std::string(str, end);
+}
+
+// Function to read sequences from a file
+bool read_sequence_from_file(const std::string& filename, std::string& sequence) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "❌ Error: Could not open the file " << filename << "\n";
+        return false;
+    }
+
+    // Read the sequence from the file
+    std::getline(file, sequence);
+
+    // Close the file
+    file.close();
+
+    // Validate sequence
+    if (sequence.empty()) {
+        std::cerr << "❌ Error: The sequence in file " << filename << " is empty.\n";
+        return false;
+    }
+
+    return true;
+}
+
+double gettimestamp() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_usec + tv.tv_sec * 1e6;
+}
+
+double hardware_start;
+double hardware_end;
+double hardware_time;
+double hardware_kerneltime;
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <xclbin file>\n";
+        return EXIT_FAILURE;
+    }
+
+    std::string xclbin_file = argv[1];
+
+//     // User Input
+//     std::string seq1, seq2;
+//     std::cout << "🔤 Enter DNA Sequence 1: ";
+//     std::getline(std::cin, seq1);
+//     std::cout << "🔤 Enter DNA Sequence 2: ";
+//     std::getline(std::cin, seq2);
+
+    // User Input: File paths for the sequences
+    std::string seq_file1, seq_file2;
+    std::cout << "🔤 Enter the address of the file for DNA Sequence 1: ";
+    std::getline(std::cin, seq_file1);
+    std::cout << "🔤 Enter the address of the file for DNA Sequence 2: ";
+    std::getline(std::cin, seq_file2);
+
+//     Read sequences from the provided files
+    std::string seq1, seq2;
+    if (!read_sequence_from_file(seq_file1, seq1)) {
+        return EXIT_FAILURE;
+    }
+    if (!read_sequence_from_file(seq_file2, seq2)) {
+        return EXIT_FAILURE;
+    }
+
+    int len1 = seq1.length();
+    int len2 = seq2.length();
+
+    int gap_penalty = -2;
+    int match_score = 1;
+    int mismatch_penalty = -2;
+
+    // Validate sequence lengths
+    if (len1 == 0 || len2 == 0) {
+        std::cerr << "❌ Error: One or both sequences are empty.\n";
+        return EXIT_FAILURE;
+    }
+
+    // Calculate the number of iterations based on the sequence lengths
+    int total_kernels = 4;  // Fixed number of kernels
+    int total_length = std::max(len1, len2);
+    int num_iterations = (total_length + 511) / 512;  // Divide sequence into 512 character chunks
+    std::string final_aligned1, final_aligned2;
+
+    std::cout << "\n====================[ DNA SEQUENCE ALIGNMENT ]====================\n";
+    std::cout << "🔑 Sequence 1 Length: " << len1 << " | Sequence 2 Length: " << len2 << "\n";
+    std::cout << "⚙️  Gap Penalty: " << gap_penalty << ", Match Score: " << match_score << ", Mismatch Penalty: " << mismatch_penalty << "\n";
+    std::cout << "===================================================================\n";
+
+    std::cout << "📡 Connecting to FPGA device...\n";
+    auto device = xrt::device(0);  // Device index 0
+
+    // Fetching device name or PCI address to identify it
+    try {
+        std::cout << "⚡ Device Name: " << device.get_info<xrt::info::device::name>() << "\n";  // Fetching device name
+        // If you want to display the PCI address, use the following line instead:
+//         std::cout << "⚡ Device PCI Address: " << device.get_info<xrt::info::device::name>() << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "❌ Error fetching device info: " << e.what() << "\n";
+        return EXIT_FAILURE;
+    }
+
+//    std::cout << "Starting Timer: " << "\n";
+//    hardware_start = gettimestamp();
+
+//    std::cout << "📁 Loading xclbin file: " << xclbin_file << "\n";
+    auto uuid = device.load_xclbin(xclbin_file);
+    auto kernel = xrt::kernel(device, uuid, "dummy_kernel");
+
+//    std::cout << "📡 Connecting to device...\n";
+//    auto device = xrt::device(0);
+
+    std::cout << "Starting Timer\n";
+    hardware_start = gettimestamp();
+//
+//    auto uuid = device.load_xclbin(xclbin_file);
+
+    std::vector<xrt::bo> bos_seq1, bos_seq2, bos_aligned1, bos_aligned2;
+    std::vector<std::unique_ptr<char[]>> maps_seq1, maps_seq2;
+    std::vector<xrt::run> runs;
+
+    // Loop through iterations for long sequences
+    for (int iteration = 0; iteration < num_iterations; ++iteration) {
+        std::cout << "Starting Iteration:" << iteration + 1 << "\n";
+        int start_offset = iteration * 512;
+
+        // Launch kernels for the current chunk of 512 characters
+        for (int i = 0; i < total_kernels; ++i) {
+            int start1 = start_offset + i * MAX_SEQ_LEN;
+            int start2 = start_offset + i * MAX_SEQ_LEN;
+
+            int len_chunk1 = std::min(MAX_SEQ_LEN, (len1 > start1) ? (len1 - start1) : 0 );  // Avoid overflow
+            int len_chunk2 = std::min(MAX_SEQ_LEN, (len2 > start2) ? (len2 - start2) : 0);
+
+            if (len_chunk1 == 0 || len_chunk2 == 0) {
+                std::cout << "Skipping kernel instance " << i + 1 << " due to zero length input.\n";
+                continue;  // Skip kernel if no data to process
+            }
+
+            double hardware_started;
+            double hardware_ended;
+            double hardware_timed;
+
+            // Use CU-specific kernel name for parallel launch
+            std::string kernel_name = "dummy_kernel:{dummy_kernel_" + std::to_string(i + 1) + "}";
+            auto kernel = xrt::kernel(device, uuid, kernel_name);
+
+            // Allocate buffers for current kernel
+//            std::cout << "🔧 Allocating memory buffers on FPGA for kernel "<< i <<"\n";
+            bos_seq1.emplace_back(device, MAX_SEQ_LEN, kernel.group_id(0));
+            bos_seq2.emplace_back(device, MAX_SEQ_LEN, kernel.group_id(1));
+            bos_aligned1.emplace_back(device, ALIGN_LEN, kernel.group_id(7));
+            bos_aligned2.emplace_back(device, ALIGN_LEN, kernel.group_id(8));
+
+            maps_seq1.emplace_back(new char[MAX_SEQ_LEN]());
+            maps_seq2.emplace_back(new char[MAX_SEQ_LEN]());
+
+            std::memcpy(maps_seq1[i].get(), seq1.c_str() + start1, len_chunk1);
+            std::memcpy(maps_seq2[i].get(), seq2.c_str() + start2, len_chunk2);
+
+            std::memcpy(bos_seq1[i].map<char*>(), maps_seq1[i].get(), MAX_SEQ_LEN);
+            std::memcpy(bos_seq2[i].map<char*>(), maps_seq2[i].get(), MAX_SEQ_LEN);
+
+            bos_seq1[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+            bos_seq2[i].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+
+            // Launch kernel for current chunk of sequences
+            std::cout << "🚀 Launching kernel instance " << i + 1 << "...\n";
+
+            hardware_started = gettimestamp();
+            runs.emplace_back(kernel(
+                bos_seq1[i], bos_seq2[i],
+                len_chunk1, len_chunk2,
+				gap_penalty, match_score, mismatch_penalty, // gap_penalty, match_score, mismatch_penalty
+                bos_aligned1[i], bos_aligned2[i]
+            ));
+
+            hardware_ended = gettimestamp();
+            hardware_timed = (hardware_ended - hardware_started) / 1000;
+            hardware_kerneltime+= hardware_timed;
+            std::cout << "Kernel Execution Time: "<< hardware_timed << "msec\n";
+        }
+
+        // Wait for all kernels to finish processing for this iteration
+        std::cout << "Processing .......\n";
+        for (auto& run : runs) {
+            run.wait();
+        }
+
+        // Retrieve the aligned results from all kernels
+        for (int i = 0; i < runs.size(); ++i) {
+            bos_aligned1[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+            bos_aligned2[i].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
+
+            char* p1 = bos_aligned1[i].map<char*>();
+            char* p2 = bos_aligned2[i].map<char*>();
+
+            final_aligned1 += trim_nulls(p1, ALIGN_LEN);
+            final_aligned2 += trim_nulls(p2, ALIGN_LEN);
+        // Clear previous buffers for next iteration
+        //runs.clear();
+        }
+    }
+
+    std::cout << "Ending Timer\n";
+    hardware_end = gettimestamp();
+    hardware_time = (hardware_end - hardware_start) / 1000;
+
+    std::cout << "\n==================[ ALIGNMENT RESULT ]==================\n";
+    std::cout << "🔬 Input Seq1  : " << seq1 << "\n";
+    std::cout << "🔬 Input Seq2  : " << seq2 << "\n";
+    std::cout << "--------------------------------------------------------\n";
+    std::cout << "✅ Aligned 1   : " << final_aligned1 << "\n";
+    std::cout << "✅ Aligned 2   : " << final_aligned2 << "\n";
+    std::cout << "========================================================\n";
+    std::cout << "Execution Time: " << hardware_time << "msec\n";
+    std::cout << "--------------------------------------------------------\n";
+    std::cout << "Kernel Time: " << hardware_kerneltime << "msec\n";
+    std::cout << "========================================================\n";
+
+    std::cout << "🎉 Alignment completed successfully!\n";
+
+    return 0;
+}
+
